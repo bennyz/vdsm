@@ -76,6 +76,15 @@ def test_acquire(fake_sanlock, lock):
     lock.acquire(HOST_ID, LEASE)
     res = fake_sanlock.read_resource(LEASE.path, LEASE.offset)
     assert res["acquired"]
+    assert not res["lvb"]
+
+
+def test_acquire_lvb(fake_sanlock, lock):
+    lock.acquireHostId(HOST_ID, wait=True)
+    lock.acquire(HOST_ID, LEASE, lvb=True)
+    res = fake_sanlock.read_resource(LEASE.path, LEASE.offset)
+    assert res["acquired"]
+    assert res["lvb"]
 
 
 def test_release(fake_sanlock, lock):
