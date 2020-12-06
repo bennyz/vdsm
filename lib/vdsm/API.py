@@ -1741,8 +1741,8 @@ class Lease(APIBase):
     def info(self, lease):
         return self._irs.lease_info(lease)
 
-    def status(self, lease):
-        return self._irs.lease_status(lease)
+    def status(self, lease, lease_type=None):
+        return self._irs.lease_status(lease, lease_type)
 
     def rebuild_leases(self, sd_id):
         return self._irs.rebuild_leases(sd_id)

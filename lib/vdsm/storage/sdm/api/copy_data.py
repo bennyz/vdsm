@@ -24,7 +24,7 @@ import logging
 
 from vdsm import jobs
 from vdsm import utils
-
+from vdsm.common import supervdsm
 from vdsm.common import properties
 from vdsm.storage import constants as sc
 from vdsm.storage import exception as se
@@ -33,7 +33,9 @@ from vdsm.storage import qemuimg
 from vdsm.storage import resourceManager as rm
 from vdsm.storage import volume
 from vdsm.storage import workarounds
+from vdsm.storage.constants import STORAGE
 from vdsm.storage.sdc import sdCache
+from vdsm.storage import disklease
 
 from . import base
 
@@ -114,6 +116,8 @@ def _create_endpoint(params, host_id, writable):
     endpoint_type = params.pop('endpoint_type')
     if endpoint_type == 'div':
         return CopyDataDivEndpoint(params, host_id, writable)
+    elif endpoint_type == 'external':
+        return CopyDataExternalEndpoint(params, host_id)
     else:
         raise ValueError("Invalid or unsupported endpoint %r" % params)
 
@@ -212,3 +216,98 @@ class CopyDataDivEndpoint(properties.Owner):
                 yield
             finally:
                 self.volume.teardown(self.sd_id, self.vol_id, justme=False)
+
+
+class CopyDataExternalEndpoint(properties.Owner):
+    _path = properties.String(required=True)
+    _lease_sd_id = properties.UUID(required=True)
+    _lease_id = properties.UUID(required=False)
+
+    def __init__(self, params, host_id):
+        self._path = params.get('path')
+        self._lease_sd_id = params.get('lease_sd_id')
+        self._lease_id = params.get('lease_id')
+        self._host_id = host_id
+        supervdsm.getProxy().appropriateDevice(self._path, None, 'rbd')
+
+    @property
+    def locks(self):
+        # with rm.acquireResource(STORAGE, self._lease_sd_id, rm.SHARED):
+        #     dom = sdCache.produce_manifest(self._lease_sd_id)
+        #     info = dom.lease_info(self._lease_id)
+        # # TODO use named arguments
+        # ret = disklease.DiskLease(info.resource, info.path, info.offset, self._lease_sd_id, self._host_id)
+        # return [ret]
+        return []
+
+    @property
+    def path(self):
+        return self._path
+
+    def is_invalid_vm_conf_disk(self):
+        return False
+
+    @property
+    def qemu_format(self):
+        return qemuimg.FORMAT.RAW
+
+    @property
+    def backing_path(self):
+        return None
+
+    @property
+    def qcow2_compat(self):
+        return None
+
+    @property
+    def backing_qemu_format(self):
+        return None
+
+    @property
+    def recommends_unordered_writes(self):
+        # TODO: change
+        return True
+
+    @property
+    def requires_create(self):
+        return False
+
+    @property
+    def volume(self):
+        return None
+
+    @contextmanager
+    def volume_operation(self):
+        log = logging.getLogger('storage.sdm.copy_data')
+        log.info("Starting operation")
+        with rm.acquireResource(STORAGE, self._lease_sd_id, rm.SHARED):
+            dom = sdCache.produce_manifest(self._lease_sd_id)
+            info = dom.lease_info(self._lease_id)
+
+        lease = disklease.DiskLease(info.resource, info.path, info.offset, self._lease_sd_id, self._host_id)
+        lease.acquire()
+        log.info("acquire disk lease")
+        yield
+        log.info("update generation")
+
+        lease.update_generation(1)
+        log.info("acquire release lease")
+
+        lease.release()
+
+    @property
+    def zero_initialized(self):
+        return False
+
+    @contextmanager
+    def prepare(self):
+        log = logging.getLogger('storage.sdm.copy_data')
+        log.info("prepare")
+        supervdsm.getProxy().appropriateDevice(self._path, None, 'rbd')
+        supervdsm.getProxy().udevTrigger(self._path, 'rbd')
+        import time
+        time.sleep(5)
+        try:
+            yield
+        finally:
+            log.info("teardown")

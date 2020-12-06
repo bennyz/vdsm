@@ -6804,6 +6804,17 @@ types:
             description: The offset of the lease in the lease file. Set when a
                          lease is created and valid until the lease is removed.
 
+    LeaseType: &LeaseType
+        name: LeaseType
+        type: object
+        added: '4.4'
+        description: Type of lease
+        properties:
+        type: enum
+        values:
+            vm: VM lease
+            disk: Disk lease
+
     VolumeLeaseStatus: &VolumeLeaseStatus
         added: '4.1'
         description: The status of a sanlock lease
@@ -6838,6 +6849,12 @@ types:
                 If the lease needs repair, this key will not be available.
                 (optional)
             name: version
+            type: int
+
+        -   defaultvalue: null
+            description: Lease LVB generation (disk lease only)
+                (optional)
+            name: generation
             type: int
 
         type: object
@@ -8166,6 +8183,7 @@ types:
         type: enum
         values:
             div: A vdsm volume identified by domain, image, and volume UUIDs
+            external: An external volume identified by its path
 
     CopyDataDIVEndpoint: &CopyDataDIVEndpoint
         added: '4.1'
@@ -8188,6 +8206,22 @@ types:
             name: generation
             type: uint
             defaultvalue: null
+        type: object
+
+    CopyDataExternalEndpoint: &CopyDataExternalEndpoint
+        added: '4.4'
+        description: An endpoint describing an external path to copy.
+        name: CopyDataExternalEndpoint
+        properties:
+        -   description: The expected generation of the Volume
+            name: path
+            type: string
+        -   description: The UUID of the Storage Domain of the lease
+            name: lease_sd_id
+            type: *UUID
+        -   description: The UUID of the Storage Domain of the lease
+            name: lease_id
+            type: *UUID
         type: object
 
     CopyDataEndpoint: &CopyDataEndpoint
@@ -9822,7 +9856,9 @@ Lease.status:
     -   name: lease
         type: *Lease
         description: Lease to query
-
+    -   name: lease_type
+        type: *LeaseType
+        description: Lease type
     return:
         description: Information about the sanlock lease status
         type: *VolumeLeaseStatus

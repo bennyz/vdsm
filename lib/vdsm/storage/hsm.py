@@ -56,6 +56,7 @@ from vdsm.common.units import MiB, GiB
 from vdsm.config import config
 from vdsm.storage import blockSD
 from vdsm.storage import clusterlock
+from vdsm.storage import disklease
 from vdsm.storage import constants as sc
 from vdsm.storage import devicemapper
 from vdsm.storage import dispatcher
@@ -107,6 +108,9 @@ UUID = "uuid"
 TYPE = "type"
 INITIALIZED = "initialized"
 CAPACITY = "capacity"
+
+TYPE_DISK = "disk"
+TYPE_VM = "vm"
 
 QEMU_READABLE_TIMEOUT = 30
 
@@ -3812,8 +3816,33 @@ class HSM(object):
     # Optional lease operations - not used yet from engine.
 
     @public
-    def lease_status(self, lease):
-        raise NotImplementedError
+    def lease_status(self, lease, lease_type=TYPE_VM):
+        lease = validators.Lease(lease)
+
+        with rm.acquireResource(STORAGE, lease.sd_id, rm.SHARED):
+            dom = sdCache.produce_manifest(lease.sd_id)
+            lock = clusterlock.SANLock(lease.sd_id, dom.external_leases_path(), None, None)
+
+        with rm.acquireResource(STORAGE, lease.sd_id, rm.SHARED):
+            dom = sdCache.produce_manifest(lease.sd_id)
+            info = dom.lease_info(lease.lease_id)
+
+        l = clusterlock.Lease(info.resource, info.path, info.offset)
+        version, host_id = lock.inquire(l)
+        owners = [host_id] if host_id is not None else []
+        generation = None
+        if lease_type == TYPE_DISK:
+
+            disk_lease = disklease.DiskLease(info.resource,
+                                             info.path,
+                                             info.offset,
+                                             info.lockspace,
+                                             self._pool.id)
+            disk_lease.acquire()
+            generation = int(disk_lease.get_lvb()['gen'])
+            disk_lease.release()
+            return dict(result=dict(owners=owners, version=version, generation=generation))
+        return dict(result=dict(owners=owners, version=version, generation=generation))
 
     # NBD
 
