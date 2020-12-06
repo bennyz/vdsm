@@ -272,3 +272,29 @@ def test_sanlock_invalid_max_hosts(block_size, max_hosts):
     error_str = str(e)
     assert "max_hosts" in error_str
     assert str(max_hosts) in error_str
+
+
+def test_set_lvb(fake_sanlock, lock):
+    lock.acquireHostId(HOST_ID, wait=True)
+    lock.acquire(HOST_ID, LEASE, lvb=True)
+    info = {
+        "generation": 1,
+        "job_status": "STARTED",
+    }
+
+    lock.set_lvb(LEASE, info)
+    result = lock.get_lvb(LEASE)
+    assert info == result
+
+
+def test_set_lvb_too_long(fake_sanlock, lock):
+    lock.acquireHostId(HOST_ID, wait=True)
+    lock.acquire(HOST_ID, LEASE, lvb=True)
+    info = {
+        "generation": 1,
+        "job_status": "STARTED",
+        "large_field": "a" * 500
+    }
+
+    with pytest.raises(se.SanlockLVBError):
+        lock.set_lvb(LEASE, info)

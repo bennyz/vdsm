@@ -22,6 +22,7 @@ from __future__ import absolute_import
 
 import errno
 import fcntl
+import json
 import collections
 import logging
 import os
@@ -70,6 +71,10 @@ HOST_STATUS_FAIL = "fail"
 
 # Host has not renewed its lease for 140 seconds.
 HOST_STATUS_DEAD = "dead"
+
+# The size of the entire LVB payload that will be passed to sanlock,
+# the payload will be aligned
+LVB_SIZE = 512
 
 
 class Error(errors.Base):
@@ -566,6 +571,35 @@ class SANLock(object):
                 raise se.ReleaseLockFailure(self._sdUUID, e)
 
         self.log.info("Successfully released %s", lease)
+
+    def set_lvb(self, lease, info):
+        self.log.info("Setting LVB data to lease %s", lease)
+        data = json.dumps(info).encode("utf-8")
+        if len(data) >= LVB_SIZE - 1:
+            raise se.SanlockLVBError("lvb dict is too big")
+        with self._lock:
+            try:
+                sanlock.set_lvb(
+                    self._lockspace_name,
+                    lease.name.encode("utf-8"),
+                    [(lease.path, lease.offset)],
+                    json.dumps(info).encode("utf-8").ljust(LVB_SIZE, b"\0"))
+            except sanlock.SanlockException as e:
+                raise se.SanlockLVBError(e)
+
+    def get_lvb(self, lease):
+        self.log.info("Getting LVB data from lease %s", lease)
+        with self._lock:
+            try:
+                data = sanlock.get_lvb(
+                    self._lockspace_name,
+                    lease.name.encode("utf-8"),
+                    [(lease.path, lease.offset)],
+                    size=sc.BLOCK_SIZE_512)
+            except sanlock.SanlockException as e:
+                raise se.SanlockLVBError(e)
+
+        return json.loads(data.rstrip(b"\0").decode("utf-8"))
 
 
 class LocalLock(object):
