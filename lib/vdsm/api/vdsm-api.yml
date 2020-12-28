@@ -8202,6 +8202,22 @@ types:
             defaultvalue: null
         type: object
 
+    CopyDataExternalEndpoint: &CopyDataExternalEndpoint
+        added: '4.4'
+        description: An endpoint describing an external path to copy.
+        name: CopyDataExternalEndpoint
+        properties:
+        -   description: The expected url of the Volume
+            name: url
+            type: string
+        -   description: The lease to be used for job tracking
+            name: lease
+            type: *Lease
+        -   description: The expected generation of the lease
+            name: generation
+            type: uint
+        type: object
+
     CopyDataEndpoint: &CopyDataEndpoint
         added: '4.1'
         description: A discriminated record containing an endpoint for a
