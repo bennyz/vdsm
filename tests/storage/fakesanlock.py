@@ -31,6 +31,8 @@ from testlib import maybefail
 from vdsm.storage import constants as sc
 from vdsm.storage.compat import sanlock
 
+LVB_POISON = b"x"
+
 
 class FakeSanlock(object):
     """
@@ -255,13 +257,15 @@ class FakeSanlock(object):
         self.check_align_and_sector(align, sector, check_sector=False)
 
         path, offset = disks[0]
-        self.resources[(path, offset)] = {"lockspace": lockspace,
-                                          "resource": resource,
-                                          "version": 0,
-                                          "acquired": False,
-                                          "align": align,
-                                          "sector": sector,
-                                          }
+        self.resources[(path, offset)] = {
+            "lockspace": lockspace,
+            "resource": resource,
+            "version": 0,
+            "acquired": False,
+            "align": align,
+            "sector": sector,
+            "lvb": False,
+        }
 
     @maybefail
     def read_resource(
@@ -284,7 +288,7 @@ class FakeSanlock(object):
         return 42
 
     def acquire(self, lockspace, resource, disks, slkfd=None, pid=None,
-                shared=False, version=None):
+                shared=False, version=None, lvb=False):
         """
         Acquire a resource lease for the current process (using the
         slkfd argument to specify the sanlock file descriptor) or for an
@@ -318,6 +322,7 @@ class FakeSanlock(object):
         host_id = ls["host_id"]
         res["host_id"] = host_id
         res["generation"] = self.hosts[host_id]["generation"]
+        res["lvb"] = lvb
         # The actual sanlock uses a timestamp field as well, but for current
         # testing purposes it is not needed since it is not used by the tested
         # code
@@ -347,6 +352,7 @@ class FakeSanlock(object):
         res["acquired"] = False
         res["host_id"] = 0
         res["generation"] = 0
+        res["lvb"] = False
 
     def read_resource_owners(
             self, lockspace, resource, disks, align=ALIGN_SIZE[0],
@@ -456,6 +462,57 @@ class FakeSanlock(object):
         dump.sort(key=itemgetter('offset'))
         return iter(dump)
 
+    def set_lvb(self, lockspace, resource, disks, data):
+        self._validate_bytes(lockspace)
+        self._validate_bytes(resource)
+        # Do we have a lockspace?
+
+        try:
+            ls = self.spaces[lockspace]
+        except KeyError:
+            raise self.SanlockException(
+                errno.ENOSPC, "No such lockspace %r" % lockspace)
+
+        if len(data) > 4096 or len(data) > ls["sector"]:
+            raise self.SanlockException(errno.E2BIG)
+
+        path, offset = disks[0]
+        res = self.resources[(path, offset)]
+        if not res["lvb"]:
+            # Sanlock returns error 2 if we try to write LVB without
+            # acquiring first with the lvb flag
+            raise self.SanlockException(errno.ENOENT,
+                                        "LVB flag was not set for resource")
+
+        # poison the remaining space in the sector to ensure it is properly
+        # initialized by callers
+        res["lvb_data"] = data.ljust(ls["sector"], LVB_POISON)
+
+    def get_lvb(self, lockspace, resource, disks, size):
+        self._validate_bytes(lockspace)
+        self._validate_bytes(resource)
+        self._validate_int(size)
+
+        if size < 1 or size > 4096:
+            raise ValueError("Invalid size %d, must be in range: 0 < size <= 4096", size)
+
+        # Do we have a lockspace?
+        try:
+            self.spaces[lockspace]
+        except KeyError:
+            raise self.SanlockException(
+                errno.ENOSPC, "No such lockspace %r" % lockspace)
+
+        path, offset = disks[0]
+        res = self.resources[(path, offset)]
+        if not res["lvb"]:
+            # Sanlock returns error 2 if we try to write LVB without
+            # acquiring first with the lvb flag
+            raise self.SanlockException(errno.ENOENT,
+                                        "LVB flag was not set for resource")
+
+        return res["lvb_data"][:size]
+
     def _in_range(self, offset, start=0, size=None):
         if offset < start:
             return False
@@ -466,3 +523,7 @@ class FakeSanlock(object):
     def _validate_bytes(self, arg):
         if not isinstance(arg, bytes):
             raise TypeError("Argument type is not bytes: %r" % arg)
+
+    def _validate_int(self, arg):
+        if not isinstance(arg, int):
+            raise TypeError("Argument type is not int: %r" % arg)
